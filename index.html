@@ -1340,6 +1340,14 @@
                     <div style="display:flex; gap:1rem; margin-top:1.2rem;" id="chartStats"></div>
                 </div>
 
+                <!-- Bell curve chart -->
+                <div id="bellSection" style="display:none; background:white; border-radius:16px; padding:1.5rem 2rem; margin-top:1.5rem; box-shadow: 0 4px 20px rgba(43,76,126,0.08);">
+                    <h3 style="color:#2b4c7e; margin:0 0 0.3rem 0; font-size:1.1rem;">🔔 התפלגות נורמלית – עקומת פעמון</h3>
+                    <p style="color:#7a8fa6; font-size:0.82rem; margin:0 0 1.2rem 0;">התפלגות אחוזי הקידום | ככל שהעקומה רחבה יותר – החלוקה דיפרנציאלית יותר (כנדרש בסעיף 4.7)</p>
+                    <canvas id="bellChart" height="100"></canvas>
+                    <div id="bellStats" style="display:flex; gap:1rem; margin-top:1.2rem;"></div>
+                </div>
+
                 <div class="export-options no-print">
                     <button class="btn btn-success" onclick="exportToPDF()">
                         📄 ייצא ל-PDF
@@ -2325,6 +2333,7 @@
 
             // Render chart
             renderPromotionChart(results);
+            renderBellChart(employees.map(e => e.finalPromotionPercent));
         }
 
         let promotionChartInstance = null;
@@ -2390,7 +2399,102 @@
             `;
         }
 
-        // Export to PDF - builds a styled HTML page and renders it via html2canvas
+        let bellChartInstance = null;
+
+        function renderBellChart(data) {
+            const section = document.getElementById('bellSection');
+            section.style.display = 'block';
+
+            const avg = data.reduce((a, b) => a + b, 0) / data.length;
+            const variance = data.reduce((s, v) => s + Math.pow(v - avg, 2), 0) / data.length;
+            const std = Math.sqrt(variance) || 0.01;
+
+            // Generate bell curve points
+            const min = avg - 3.5 * std;
+            const max = avg + 3.5 * std;
+            const steps = 80;
+            const step = (max - min) / steps;
+            const bellX = [], bellY = [];
+            for (let i = 0; i <= steps; i++) {
+                const x = min + i * step;
+                bellX.push(x.toFixed(2) + '%');
+                bellY.push((1 / (std * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - avg) / std, 2)));
+            }
+
+            // Employee dots on the curve
+            const empDots = data.map(v => ({
+                x: v.toFixed(2) + '%',
+                y: (1 / (std * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((v - avg) / std, 2))
+            }));
+
+            if (bellChartInstance) bellChartInstance.destroy();
+
+            bellChartInstance = new Chart(document.getElementById('bellChart'), {
+                type: 'line',
+                data: {
+                    labels: bellX,
+                    datasets: [
+                        {
+                            label: 'עקומת פעמון',
+                            data: bellY,
+                            borderColor: '#2b4c7e',
+                            backgroundColor: 'rgba(43,76,126,0.08)',
+                            borderWidth: 2.5,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'עובדים',
+                            data: empDots,
+                            type: 'scatter',
+                            backgroundColor: '#e07b39',
+                            borderColor: 'white',
+                            borderWidth: 2,
+                            pointRadius: 7,
+                            pointHoverRadius: 9
+                        }
+                    ]
+                },
+                options: {
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.label === 'עובדים'
+                                    ? ` אחוז קידום: ${ctx.parsed.x.toFixed(2)}%`
+                                    : ''
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { maxTicksLimit: 8, callback: v => bellX[v] }, grid: { display: false } },
+                        y: { display: false }
+                    }
+                }
+            });
+
+            // Stats
+            const minV = Math.min(...data), maxV = Math.max(...data);
+            document.getElementById('bellStats').innerHTML = `
+                <div style="flex:1;background:#f0f4f8;border-radius:10px;padding:0.7rem 1rem;text-align:center;">
+                    <div style="font-size:1.1rem;font-weight:700;color:#2b4c7e;">${avg.toFixed(2)}%</div>
+                    <div style="font-size:0.75rem;color:#7a8fa6;margin-top:2px;">ממוצע</div>
+                </div>
+                <div style="flex:1;background:#f0f4f8;border-radius:10px;padding:0.7rem 1rem;text-align:center;">
+                    <div style="font-size:1.1rem;font-weight:700;color:#2b4c7e;">${std.toFixed(2)}%</div>
+                    <div style="font-size:0.75rem;color:#7a8fa6;margin-top:2px;">סטיית תקן</div>
+                </div>
+                <div style="flex:1;background:#e8f4ee;border-radius:10px;padding:0.7rem 1rem;text-align:center;">
+                    <div style="font-size:1.1rem;font-weight:700;color:#1a7a4a;">${minV.toFixed(2)}% – ${maxV.toFixed(2)}%</div>
+                    <div style="font-size:0.75rem;color:#7a8fa6;margin-top:2px;">טווח קידום</div>
+                </div>
+                <div style="flex:1;background:${std > 0.5 ? '#e8f4ee' : '#fff3e0'};border-radius:10px;padding:0.7rem 1rem;text-align:center;">
+                    <div style="font-size:1.1rem;font-weight:700;color:${std > 0.5 ? '#1a7a4a' : '#e07b39'};">${std > 0.5 ? '✓ דיפרנציאלי' : '⚠️ אחיד מדי'}</div>
+                    <div style="font-size:0.75rem;color:#7a8fa6;margin-top:2px;">אופי החלוקה</div>
+                </div>
+            `;
+        }
         async function exportToPDF() {
             const results = calculateResults();
             const dateStr = new Date().toLocaleDateString('he-IL', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -2404,12 +2508,23 @@
             if (promotionChartInstance) {
                 const chartCanvas = document.getElementById('promotionChart');
                 const chartImg = chartCanvas.toDataURL('image/png');
+                let bellImgTag = '';
+                if (bellChartInstance) {
+                    const bellCanvas = document.getElementById('bellChart');
+                    const bellImg = bellCanvas.toDataURL('image/png');
+                    bellImgTag = `
+                        <div style="background:white; border-radius:10px; padding:16px 20px; box-shadow:0 1px 4px rgba(0,0,0,0.07); margin-top:12px;">
+                            <div style="font-weight:700; color:#2b4c7e; font-size:13px; margin-bottom:6px;">🔔 התפלגות נורמלית – עקומת פעמון</div>
+                            <img src="${bellImg}" style="width:100%; height:auto; border-radius:6px;" />
+                        </div>`;
+                }
                 chartImgHtml = `
                     <div style="padding:16px 36px 0; background:#f0f4f9;">
                         <div style="background:white; border-radius:10px; padding:16px 20px; box-shadow:0 1px 4px rgba(0,0,0,0.07);">
                             <div style="font-weight:700; color:#2b4c7e; font-size:13px; margin-bottom:6px;">📊 התפלגות קידום עובדים</div>
                             <img src="${chartImg}" style="width:100%; height:auto; border-radius:6px;" />
                         </div>
+                        ${bellImgTag}
                     </div>`;
             }
 
